@@ -1,7 +1,7 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import paho.mqtt.client as mqtt
 import json
-import time
 import random
 import string
 from bokeh.models import CustomJS
@@ -12,77 +12,126 @@ from streamlit_bokeh_events import streamlit_bokeh_events
 # CONFIGURACIÓN GENERAL
 # ------------------------------------------------------------------
 st.set_page_config(
-    page_title="Krov VOX-LINK // Control Vocal Ciberfísico",
+    page_title="Control por Voz // Krov",
     page_icon="🎙️",
     layout="centered"
 )
 
 # ------------------------------------------------------------------
-# ESTILOS KROV NOIR
+# ESTILOS OSCUROS
 # ------------------------------------------------------------------
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;600;700&family=Spectral:wght@600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap');
 
 html, body, [data-testid="stAppViewContainer"], .stApp {
-    background-color: #030407 !important;
+    background-color: #04060a !important;
     color: #f1f5f9 !important;
     font-family: 'Plus Jakarta Sans', sans-serif !important;
 }
 
 [data-testid="stHeader"] { background: transparent !important; }
 
-/* Contenedores nativos estilizados: CERO cajas vacías */
-div[data-testid="stVerticalBlockBorderWrapper"] {
-    background: linear-gradient(145deg, rgba(16, 12, 30, 0.95) 0%, rgba(6, 4, 14, 0.98) 100%) !important;
-    border: 1px solid rgba(192, 132, 252, 0.3) !important;
-    border-top: 3px solid #c084fc !important;
-    border-radius: 12px !important;
-    padding: 1.5rem !important;
-    box-shadow: 0 12px 35px rgba(0, 0, 0, 0.8) !important;
-    margin-bottom: 1.2rem !important;
-}
-
-.radar-badge {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.72rem;
-    letter-spacing: 0.2em;
-    color: #c084fc;
-    text-transform: uppercase;
-}
-
-iframe {
+/* Elimina el cuadro blanco del contenedor de Bokeh */
+div[data-testid="stCustomComponentV1"], iframe {
     background: transparent !important;
-    display: block;
-    margin: 0 auto;
+    border: none !important;
+    display: block !important;
+    margin: 0 auto !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # ------------------------------------------------------------------
+# INYECCIÓN QUE ELIMINA EL BOTÓN BLANCO DENTRO DEL IFRAME DE BOKEH
+# ------------------------------------------------------------------
+components.html("""
+<script>
+(function() {
+    function fixBokehButton() {
+        const iframes = window.parent.document.querySelectorAll('iframe');
+        iframes.forEach(f => {
+            try {
+                const doc = f.contentDocument || f.contentWindow.document;
+                if (doc && doc.querySelector('.bk-btn') && !doc.getElementById('krov-dark-button-fix')) {
+                    doc.body.style.background = 'transparent';
+                    doc.documentElement.style.background = 'transparent';
+                    f.style.background = 'transparent';
+                    f.style.border = 'none';
+
+                    const style = doc.createElement('style');
+                    style.id = 'krov-dark-button-fix';
+                    style.innerHTML = `
+                        html, body {
+                            background: transparent !important;
+                            margin: 0 !important;
+                            padding: 0 !important;
+                            overflow: hidden !important;
+                        }
+                        .bk-root {
+                            background: transparent !important;
+                            display: flex !important;
+                            justify-content: center !important;
+                            align-items: center !important;
+                            width: 100% !important;
+                        }
+                        .bk-btn, .bk-btn-default {
+                            background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%) !important;
+                            color: #ffffff !important;
+                            border: 1px solid rgba(192, 132, 252, 0.7) !important;
+                            border-radius: 25px !important;
+                            font-family: 'Plus Jakarta Sans', sans-serif !important;
+                            font-weight: 700 !important;
+                            font-size: 0.95rem !important;
+                            letter-spacing: 0.04em !important;
+                            padding: 10px 24px !important;
+                            box-shadow: 0 0 20px rgba(124, 58, 237, 0.5) !important;
+                            cursor: pointer !important;
+                            transition: all 0.2s ease !important;
+                            outline: none !important;
+                            width: 260px !important;
+                            height: 44px !important;
+                        }
+                        .bk-btn:hover {
+                            background: linear-gradient(135deg, #9333ea 0%, #c084fc 100%) !important;
+                            box-shadow: 0 0 30px rgba(192, 132, 252, 0.8) !important;
+                            transform: translateY(-1px) !important;
+                        }
+                    `;
+                    doc.head.appendChild(style);
+                }
+            } catch(e) {}
+        });
+    }
+    setInterval(fixBokehButton, 80);
+})();
+</script>
+""", height=0, width=0)
+
+# ------------------------------------------------------------------
 # ESTADO
 # ------------------------------------------------------------------
 if 'vox_xp' not in st.session_state:
-    st.session_state.vox_xp = 80
+    st.session_state.vox_xp = 50
 if 'last_cmd' not in st.session_state:
-    st.session_state.last_cmd = "Sin órdenes registradas"
+    st.session_state.last_cmd = "Sin órdenes recientes"
 if 'matched_action' not in st.session_state:
-    st.session_state.matched_action = "EN ESPERA"
+    st.session_state.matched_action = "Esperando voz..."
 
 # ------------------------------------------------------------------
-# PARSER DIFUSO DE VOZ
+# PARSER DE COMANDOS NATURALES
 # ------------------------------------------------------------------
 def interpretar_comando(txt):
     t = txt.lower().strip()
     if any(w in t for w in ["enciende", "prende", "encender", "prender", "luz on", "luces on"]):
-        return {"topic_suffix": "cmqtt_s", "payload": {"Act1": "ON"}, "action": "💡 ENCENDER LUCES"}
+        return {"topic_suffix": "cmqtt_s", "payload": {"Act1": "ON"}, "action": "💡 Encender luz"}
     if any(w in t for w in ["apaga", "apagar", "desactiva", "luz off", "luces off", "corta"]):
-        return {"topic_suffix": "cmqtt_s", "payload": {"Act1": "OFF"}, "action": "🌑 APAGAR LUCES"}
+        return {"topic_suffix": "cmqtt_s", "payload": {"Act1": "OFF"}, "action": "🌑 Apagar luz"}
     if any(w in t for w in ["abre", "abrir", "puerta abierta", "porton", "compuerta abierta"]):
-        return {"topic_suffix": "cmqtt_a", "payload": {"Analog": 100.0}, "action": "🚪 ABRIR COMPUERTA (180°)"}
+        return {"topic_suffix": "cmqtt_a", "payload": {"Analog": 100.0}, "action": "🚪 Abrir puerta (180°)"}
     if any(w in t for w in ["cierra", "cerrar", "puerta cerrada", "bloquea"]):
-        return {"topic_suffix": "cmqtt_a", "payload": {"Analog": 0.0}, "action": "🔒 CERRAR COMPUERTA (0°)"}
-    return {"topic_suffix": "voice_ctrl", "payload": {"Act1": t}, "action": f"🗣️ COMANDO PERSONALIZADO: '{t}'"}
+        return {"topic_suffix": "cmqtt_a", "payload": {"Analog": 0.0}, "action": "🔒 Cerrar puerta (0°)"}
+    return {"topic_suffix": "voice_ctrl", "payload": {"Act1": t}, "action": f"Mensaje libre: '{t}'"}
 
 # ------------------------------------------------------------------
 # CLIENTE MQTT
@@ -111,34 +160,33 @@ def emitir_orden(broker, port, topic, payload):
 # BARRA LATERAL
 # ------------------------------------------------------------------
 with st.sidebar:
-    st.markdown("### KROV // PARÁMETROS VOZ")
+    st.markdown("### Configuración de Voz")
     broker = st.text_input("Broker:", value="broker.mqttdashboard.com")
     port = st.number_input("Puerto:", value=1883)
-    prefijo = st.text_input("Prefijo de Tópico (opcional):", value="lizalda")
+    prefijo = st.text_input("Nombre de tu proyecto Wokwi:", value="lizalda")
     
     st.divider()
-    st.markdown(f"**XP de Enlace Vocal:** `{st.session_state.vox_xp}`")
-    st.markdown(f"**Nivel de Autorización:** `VOX-{min(st.session_state.vox_xp // 60, 5)}`")
+    st.markdown(f"**Puntos de voz:** `{st.session_state.vox_xp}`")
 
 # ------------------------------------------------------------------
-# BANNER PRINCIPAL (100% AUTOCONTENIDO)
+# TARJETA PRINCIPAL AUTOCONTENIDA
 # ------------------------------------------------------------------
 st.markdown("""
-<div style="background:linear-gradient(145deg, rgba(16,12,30,0.95), rgba(6,4,14,0.98)); border:1px solid rgba(192,132,252,0.3); border-top:3px solid #c084fc; border-radius:12px; padding:24px; text-align:center; box-shadow:0 12px 35px rgba(0,0,0,0.8); margin-bottom:1.2rem;">
-    <div class="radar-badge">● PROTOCOLO CIBERFÍSICO VOX-LINK ACTIVO</div>
-    <svg width="100" height="100" viewBox="0 0 100 100" style="margin: 12px auto; display:block;">
-        <circle cx="50" cy="50" r="44" fill="none" stroke="rgba(192, 132, 252, 0.2)" stroke-width="2"/>
-        <circle cx="50" cy="50" r="28" fill="none" stroke="#c084fc" stroke-width="1.5" stroke-dasharray="6 4"/>
-        <circle cx="50" cy="50" r="14" fill="rgba(192, 132, 252, 0.25)" stroke="#00f0ff" stroke-width="2"/>
-        <path d="M 45 42 L 55 42 M 50 35 L 50 55 M 43 55 L 57 55" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
+<div style="background: linear-gradient(145deg, #120e22 0%, #080612 100%); border:1px solid rgba(192,132,252,0.3); border-top:3px solid #c084fc; border-radius:12px; padding:24px; text-align:center; box-shadow:0 12px 30px rgba(0,0,0,0.8); margin-bottom:1.2rem;">
+    <svg width="60" height="60" viewBox="0 0 100 100" style="margin: 0 auto 8px auto; display:block;">
+        <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(192, 132, 252, 0.3)" stroke-width="2"/>
+        <circle cx="50" cy="50" r="26" fill="none" stroke="#c084fc" stroke-width="1.8"/>
+        <circle cx="50" cy="50" r="12" fill="rgba(192, 132, 252, 0.4)"/>
     </svg>
-    <div style="font-family:'Spectral', Georgia; font-size:1.7rem; font-weight:700;">Reconocimiento Vocal de Órdenes</div>
-    <div style="font-size:0.86rem; color:#94a3b8; margin-top:4px;">Pulsa el botón, acepta el permiso de micrófono y habla en español (Chrome o Edge).</div>
+    <div style="font-size:1.6rem; font-weight:700; color:#ffffff;">Control por Voz</div>
+    <div style="font-size:0.9rem; color:#94a3b8; margin-top:4px;">
+        Presiona el botón, di un comando como <i>"enciende la luz"</i> o <i>"abre la puerta"</i> y el sistema lo enviará a tu circuito.
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
 # Botón STT Bokeh
-stt_button = Button(label="🎙️ ACTIVAR MICRÓFONO", width=260, height=48)
+stt_button = Button(label="🎙️ Activar Micrófono", width=260, height=44)
 stt_button.js_on_event("button_click", CustomJS(code="""
     var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRec) {
@@ -164,7 +212,7 @@ result = streamlit_bokeh_events(
     events="GET_TEXT",
     key="listen_voice",
     refresh_on_update=False,
-    override_height=65,
+    override_height=52,
     debounce_time=0
 )
 
@@ -183,14 +231,19 @@ if result and "GET_TEXT" in result:
     if ok:
         st.session_state.last_cmd = texto
         st.session_state.matched_action = interp['action']
-        st.session_state.vox_xp += 25
-        st.success(f"✅ Transmitido al ESP32: **{interp['action']}**")
+        st.session_state.vox_xp += 20
+        st.success(f"✅ Orden enviada al circuito: {interp['action']}")
     else:
-        st.error(f"Falla de emisión MQTT: {err}")
+        st.error(f"No se pudo enviar la orden: {err}")
 
-# Panel de Telemetría Vocal (Nativo con border=True: CERO cajas vacías)
-with st.container(border=True):
-    st.markdown('<div style="font-family:\'JetBrains Mono\'; font-size:0.75rem; color:#d4af37;">ÚLTIMA LOCUCIÓN CAPTURADA:</div>', unsafe_allow_html=True)
-    st.markdown(f'<div style="font-size:1.15rem; font-weight:600; color:#ffffff; margin: 4px 0 10px 0;">"{st.session_state.last_cmd}"</div>', unsafe_allow_html=True)
-    st.markdown('<div style="font-family:\'JetBrains Mono\'; font-size:0.75rem; color:#00f0ff;">ACCIÓN CIBERFÍSICA ASOCIADA:</div>', unsafe_allow_html=True)
-    st.markdown(f'<div style="font-size:1.05rem; color:#00ff88; font-weight:700;">{st.session_state.matched_action}</div>', unsafe_allow_html=True)
+st.write("")
+
+# Tarjeta de respuesta de una sola pieza (autocontenida)
+st.markdown(f"""
+<div style="background:#0d0a17; border:1px solid rgba(192,132,252,0.25); border-left:4px solid #c084fc; border-radius:8px; padding:16px;">
+    <div style="font-size:0.75rem; color:#94a3b8; text-transform:uppercase; letter-spacing:0.1em; font-family:'JetBrains Mono';">Lo que escuché:</div>
+    <div style="font-size:1.15rem; font-weight:600; color:#ffffff; margin:4px 0 8px 0;">"{st.session_state.last_cmd}"</div>
+    <div style="font-size:0.75rem; color:#94a3b8; text-transform:uppercase; letter-spacing:0.1em; font-family:'JetBrains Mono';">Acción realizada:</div>
+    <div style="font-size:1rem; color:#00ff88; font-weight:700;">{st.session_state.matched_action}</div>
+</div>
+""", unsafe_allow_html=True)
