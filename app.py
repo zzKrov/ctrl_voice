@@ -3,6 +3,7 @@ import streamlit.components.v1 as components
 import paho.mqtt.client as mqtt
 import json
 import time
+import random
 from bokeh.models import CustomJS
 from bokeh.models.widgets import Button
 from streamlit_bokeh_events import streamlit_bokeh_events
@@ -36,7 +37,7 @@ div[data-testid="stCustomComponentV1"], iframe {
 </style>
 """, unsafe_allow_html=True)
 
-# Inyección de estilo para el botón de Bokeh
+# Inyección de estilos para el botón de Bokeh
 components.html("""
 <script>
 (function() {
@@ -82,7 +83,17 @@ components.html("""
 """, height=0, width=0)
 
 # ==============================================================================
-# GATEWAY DE EMISIÓN DE VOZ
+# FÁBRICA DE CLIENTE MQTT UNIVERSAL
+# ==============================================================================
+def create_mqtt_client(client_prefix: str) -> mqtt.Client:
+    cid = f"{client_prefix}_{int(time.time())}_{random.randint(1000, 9999)}"
+    try:
+        return mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2, client_id=cid)
+    except (AttributeError, TypeError):
+        return mqtt.Client(client_id=cid, clean_session=True)
+
+# ==============================================================================
+# GATEWAY DE VOZ PERSISTENTE
 # ==============================================================================
 class VoiceCommandGateway:
     def __init__(self, broker: str = "broker.mqttdashboard.com", port: int = 1883, device_id: str = "esp32_main"):
@@ -90,10 +101,7 @@ class VoiceCommandGateway:
         self.topic_digital = f"devices/{device_id}/cmd/digital"
         self.topic_analog = f"devices/{device_id}/cmd/analog"
         
-        self._client = mqtt.Client(
-            callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
-            client_id=f"Client_Voice_{device_id}"
-        )
+        self._client = create_mqtt_client("Streamlit_Voice")
         try:
             self._client.connect(broker, port, keepalive=30)
             self._client.loop_start()
@@ -103,7 +111,6 @@ class VoiceCommandGateway:
     def dispatch(self, transcript: str):
         t = transcript.lower().strip()
         
-        # Enrutamiento semántico
         if any(w in t for w in ["enciende", "prende", "encender", "activar luz"]):
             self._client.publish(self.topic_digital, json.dumps({"state": "ON"}), qos=1)
             return "💡 Luz activada (ON)"
@@ -129,7 +136,7 @@ def get_voice_gateway() -> VoiceCommandGateway:
 gateway = get_voice_gateway()
 
 st.title("🎙️ Control Vocal de Actuadores")
-st.caption(f"Traducción automática de lenguaje natural a comandos para `{gateway.device_id}`")
+st.caption(f"Traducción automática de órdenes para `{gateway.device_id}`")
 
 st.markdown("""
 <div style="background: linear-gradient(145deg, #0d152d 0%, #070d1e 100%); border:1px solid rgba(56,189,248,0.25); border-top:3px solid #38bdf8; border-radius:12px; padding:22px; text-align:center; margin-bottom:1.5rem;">
